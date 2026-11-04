@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WeChat Reader</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <header class="side-head">
+      <div class="brand">
+        <span class="brand-mark">W</span>
+        <span class="brand-name">WeChat Reader</span>
+        <span id="fresh" class="fresh" title="同步状态"><i></i><b>连接中</b></span>
+      </div>
+      <div class="search">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.5 3a7.5 7.5 0 0 1 5.9 12.1l4.2 4.2-1.4 1.4-4.2-4.2A7.5 7.5 0 1 1 10.5 3Zm0 2a5.5 5.5 0 1 0 0 11 5.5 5.5 0 0 0 0-11Z"/></svg>
+        <input id="q" type="search" placeholder="搜索联系人 / 群聊 / 备注 / 拼音" autocomplete="off">
+      </div>
+      <nav class="tabs" id="tabs">
+        <button data-kind="" class="on">全部</button>
+        <button data-kind="friend">私聊</button>
+        <button data-kind="chatroom">群聊</button>
+        <button data-kind="official">公众号</button>
+        <button data-mode="search" class="tab-search" title="跨会话搜索">跨会话搜索</button>
+      </nav>
+    </header>
+    <div class="list" id="list"></div>
+  </aside>
+
+  <main class="main" id="main">
+    <div class="empty" id="welcome">
+      <div class="empty-mark">W</div>
+      <p>选择左侧的会话查看聊天记录</p>
+      <p class="muted">可按发送者、关键词和日期筛选；新消息会实时出现。</p>
+    </div>
+
+    <section class="chat hidden" id="chat">
+      <header class="chat-head">
+        <button class="back" id="back" aria-label="返回">‹</button>
+        <div class="chat-title">
+          <h1 id="chatName"></h1>
+          <span id="chatSub" class="muted"></span>
+        </div>
+        <button class="filter-toggle" id="filterToggle" aria-expanded="false">筛选</button>
+      </header>
+      <form class="filters" id="filters" autocomplete="off">
+        <label class="f-sender">
+          <span>发送者</span>
+          <select id="fSender"><option value="">全部成员</option></select>
+        </label>
+        <label class="f-kw">
+          <span>关键词</span>
+          <input id="fKeyword" type="search" placeholder="消息内容">
+        </label>
+        <label class="f-date">
+          <span>从</span>
+          <input id="fSince" type="date">
+        </label>
+        <label class="f-date">
+          <span>到</span>
+          <input id="fUntil" type="date">
+        </label>
+        <div class="f-actions">
+          <button type="submit" class="primary">应用</button>
+          <button type="button" id="fClear">清除</button>
+        </div>
+      </form>
+      <div class="chips" id="chips"></div>
+      <div class="msgs" id="msgs"></div>
+      <button class="jump hidden" id="jump">↓ 新消息</button>
+    </section>
+
+    <section class="gsearch hidden" id="gsearch">
+      <header class="chat-head">
+        <button class="back" id="gBack" aria-label="返回">‹</button>
+        <div class="chat-title"><h1>跨会话搜索</h1><span class="muted">按联系人和/或关键词搜索所有聊天</span></div>
+      </header>
+      <form class="filters open" id="gForm" autocomplete="off">
+        <label class="f-sender picker">
+          <span>联系人</span>
+          <input id="gSenderInput" type="search" placeholder="谁说的（可选）">
+          <input id="gSender" type="hidden">
+          <div class="suggest hidden" id="gSuggest"></div>
+        </label>
+        <label class="f-kw">
+          <span>关键词</span>
+          <input id="gKeyword" type="search" placeholder="包含的文字（可选）">
+        </label>
+        <label class="f-date"><span>从</span><input id="gSince" type="date"></label>
+        <label class="f-date"><span>到</span><input id="gUntil" type="date"></label>
+        <div class="f-actions"><button type="submit" class="primary">搜索</button></div>
+      </form>
+      <div class="msgs results" id="gResults"></div>
+    </section>
+  </main>
+</div>
+<script src="/app.js"></script>
+</body>
+</html>

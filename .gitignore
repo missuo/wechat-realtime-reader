@@ -1,0 +1,31 @@
+# Secrets and account mapping
+.secrets/
+keys*.json
+*key-capture*
+source-config.json
+
+# Databases, journals, snapshots, and plaintext exports
+*.db
+*.db-*
+*.sqlite*
+*.wal
+*.shm
+*.journal
+snapshots/
+decrypted/
+exports/
+
+# Runtime state and logs
+state/
+manifests/
+*.log
+
+# Python/macOS
+.venv/
+__pycache__/
+*.py[cod]
+.DS_Store
+
+# Build output
+bin/
+image-key*.json
