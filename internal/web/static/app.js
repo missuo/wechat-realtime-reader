@@ -349,6 +349,8 @@ function renderMessage(m, isGroup, kw, opts = {}) {
     line.append(card);
   } else if (m.kind === "image" && m.media_id) {
     line.append(imageBubble(m));
+  } else if (m.kind === "video" && m.media_id) {
+    line.append(videoBubble(m));
   } else {
     const isMedia = /^\[(图片|表情|语音|视频|语音\/视频通话)/.test(m.text) && m.kind !== "text";
     const b = el("div", "bubble" + (isMedia ? " media" : ""));
@@ -404,6 +406,51 @@ function openLightbox(m) {
   const hint = el("div", "lb-hint", `${m.sender_name} · ${new Date(m.time).toLocaleString()} · 点击任意处关闭`);
   box.append(img, hint);
   const close = () => { box.remove(); document.removeEventListener("keydown", onKey); };
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+  box.addEventListener("click", close);
+  document.addEventListener("keydown", onKey);
+  document.body.append(box);
+}
+
+// ---------- videos ----------
+function videoURL(m, cover) {
+  const t = Math.floor(Date.parse(m.time) / 1000);
+  const p = new URLSearchParams({ id: m.media_id, t });
+  if (cover) p.set("cover", "1");
+  return "/api/video?" + p.toString();
+}
+
+function videoBubble(m) {
+  const b = el("div", "bubble pic video");
+  const img = new Image();
+  img.alt = "视频";
+  img.decoding = "async";
+  img.addEventListener("load", () => { if (state.pinBottom) $("msgs").scrollTop = $("msgs").scrollHeight; });
+  img.addEventListener("error", () => {
+    b.className = "bubble media";
+    b.textContent = m.text + " 未下载到本机";
+  });
+  img.src = videoURL(m, true);
+  const dur = (m.extra || {}).duration_sec;
+  const badge = el("span", "play", dur ? `▶ ${Math.floor(dur / 60)}:${String(dur % 60).padStart(2, "0")}` : "▶");
+  b.append(img, badge);
+  b.addEventListener("click", () => openVideo(m));
+  return b;
+}
+
+function openVideo(m) {
+  const box = el("div", "lightbox");
+  const v = document.createElement("video");
+  v.controls = true;
+  v.autoplay = true;
+  v.playsInline = true;
+  v.poster = videoURL(m, true);
+  const hint = el("div", "lb-hint", `${m.sender_name} · ${new Date(m.time).toLocaleString()} · Esc 或点击空白处关闭`);
+  v.addEventListener("error", () => { hint.textContent = "视频文件未下载到本机（在微信里点开一次即可）"; });
+  v.src = videoURL(m, false);
+  v.addEventListener("click", (e) => e.stopPropagation());
+  box.append(v, hint);
+  const close = () => { v.pause(); box.remove(); document.removeEventListener("keydown", onKey); };
   const onKey = (e) => { if (e.key === "Escape") close(); };
   box.addEventListener("click", close);
   document.addEventListener("keydown", onKey);

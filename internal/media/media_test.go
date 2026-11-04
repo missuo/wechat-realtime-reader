@@ -6,8 +6,11 @@ import (
 	"crypto/md5"
 	"encoding/binary"
 	"encoding/hex"
+	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 )
 
 // encodeV2 builds a synthetic V2 .dat file (test-only).
@@ -88,5 +91,36 @@ func TestDeriveKeys(t *testing.T) {
 	}
 	if string(k.AES) != string(key) || k.XOR != 0x26 {
 		t.Fatalf("derived wrong key")
+	}
+}
+
+func TestVideoLookup(t *testing.T) {
+	acct := t.TempDir()
+	lib := NewLibrary(acct, filepath.Join(acct, "k.json"), filepath.Join(acct, "cache"), "wxid_x")
+	id := "5168e6dd3cea1bfd438c8a3c5becabf5"
+	when := time.Date(2026, 11, 4, 14, 59, 0, 0, time.Local)
+
+	if _, err := lib.VideoPath(id, when); err != ErrVideoNotFound {
+		t.Fatalf("missing video: got %v", err)
+	}
+	// Stored in the previous month folder: still found.
+	dir := filepath.Join(acct, "msg", "video", "2026-10")
+	os.MkdirAll(dir, 0o700)
+	os.WriteFile(filepath.Join(dir, id+"_raw.mp4"), []byte("raw"), 0o600)
+	os.WriteFile(filepath.Join(dir, id+".mp4"), []byte("mp4"), 0o600)
+	os.WriteFile(filepath.Join(dir, id+"_thumb.jpg"), fakeJPEG(64), 0o600)
+	p, err := lib.VideoPath(id, when)
+	if err != nil || filepath.Base(p) != id+".mp4" {
+		t.Fatalf("VideoPath = %q, %v", p, err)
+	}
+	if _, mime, err := lib.VideoCover(id, when); err != nil || mime != "image/jpeg" {
+		t.Fatalf("VideoCover = %q, %v", mime, err)
+	}
+	// Far-away month: found by the fallback glob.
+	if _, err := lib.VideoPath(id, when.AddDate(0, 5, 0)); err != nil {
+		t.Fatalf("glob fallback: %v", err)
+	}
+	if _, err := lib.VideoPath("../../etc/passwd", when); err != ErrVideoNotFound {
+		t.Fatalf("bad id accepted: %v", err)
 	}
 }

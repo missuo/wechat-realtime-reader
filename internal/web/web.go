@@ -77,6 +77,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/members", s.members)
 	mux.HandleFunc("GET /api/avatar/{user}", s.avatar)
 	mux.HandleFunc("GET /api/image", s.image)
+	mux.HandleFunc("GET /api/video", s.video)
 	mux.HandleFunc("GET /api/status", s.status)
 	mux.HandleFunc("GET /api/events", s.events)
 	if s.MCP != nil {
@@ -313,6 +314,50 @@ func (s *Server) image(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", mime)
 	w.Header().Set("Cache-Control", "private, max-age=86400")
 	w.Write(b)
+}
+
+// video serves a video attachment: ?id=&t=[&cover=1]. The mp4 is served
+// with Range support so the browser can seek.
+func (s *Server) video(w http.ResponseWriter, r *http.Request) {
+	if s.Media == nil {
+		http.NotFound(w, r)
+		return
+	}
+	q := r.URL.Query()
+	ts, _ := strconv.ParseInt(q.Get("t"), 10, 64)
+	t := time.Unix(ts, 0)
+	if q.Get("cover") != "" {
+		b, mime, err := s.Media.VideoCover(q.Get("id"), t)
+		if err != nil {
+			w.Header().Set("Cache-Control", "private, max-age=300")
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", mime)
+		w.Header().Set("Cache-Control", "private, max-age=86400")
+		w.Write(b)
+		return
+	}
+	p, err := s.Media.VideoPath(q.Get("id"), t)
+	if err != nil {
+		w.Header().Set("Cache-Control", "private, max-age=300")
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	f, err := os.Open(p)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "video/mp4")
+	w.Header().Set("Cache-Control", "private, max-age=86400")
+	http.ServeContent(w, r, "", st.ModTime(), f)
 }
 
 func (s *Server) status(w http.ResponseWriter, r *http.Request) {

@@ -278,7 +278,7 @@ func New(st *store.Store, lib *media.Library, status func() map[string]snapshot.
 	if lib != nil {
 		type imageIn struct {
 			Chat    string `json:"chat" jsonschema:"conversation username or name the image was sent in"`
-			MediaID string `json:"media_id" jsonschema:"media_id of an image message from get_messages / search_messages"`
+			MediaID string `json:"media_id" jsonschema:"media_id of an image message (kind image) from get_messages / search_messages"`
 			Time    string `json:"time" jsonschema:"the message time as returned (e.g. 2026-11-04 08:32:30)"`
 			Full    bool   `json:"full,omitempty" jsonschema:"return the original instead of the thumbnail"`
 		}
@@ -304,6 +304,35 @@ func New(st *store.Store, lib *media.Library, status func() map[string]snapshot.
 				return nil, nil, err
 			}
 			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.ImageContent{Data: b, MIMEType: mime}}}, nil, nil
+		})
+
+		type videoIn struct {
+			MediaID string `json:"media_id" jsonschema:"media_id of a video message (kind video) from get_messages / search_messages"`
+			Time    string `json:"time" jsonschema:"the message time as returned (e.g. 2026-11-04 08:32:30)"`
+		}
+		mcp.AddTool(s, &mcp.Tool{
+			Name:        "get_video",
+			Description: "Return the cover frame of a video message so you can look at it, plus the local path of the mp4 (open it, or run ffmpeg on it for more frames / audio). Only videos already downloaded by WeChat on this Mac are available.",
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, func(ctx context.Context, _ *mcp.CallToolRequest, in videoIn) (*mcp.CallToolResult, any, error) {
+			t, err := store.ParseTime(in.Time)
+			if err != nil {
+				return nil, nil, err
+			}
+			var content []mcp.Content
+			if b, mime, err := lib.VideoCover(in.MediaID, t); err == nil {
+				content = append(content, &mcp.ImageContent{Data: b, MIMEType: mime})
+			}
+			p, perr := lib.VideoPath(in.MediaID, t)
+			switch {
+			case perr == nil:
+				content = append(content, &mcp.TextContent{Text: "mp4: " + p})
+			case len(content) == 0:
+				return nil, nil, perr
+			default:
+				content = append(content, &mcp.TextContent{Text: "mp4 not downloaded to this Mac (only the cover is available); open it once in WeChat"})
+			}
+			return &mcp.CallToolResult{Content: content}, nil, nil
 		})
 	}
 

@@ -29,7 +29,8 @@ type Message struct {
 	Raw        string    `json:"raw,omitempty"`
 	Extra      *Extra    `json:"extra,omitempty"`
 	// MediaID names the local attachment files for images
-	// (<media_id>[_t|_h].dat under msg/attach).
+	// (<media_id>[_t|_h].dat under msg/attach) and videos
+	// (<media_id>.mp4 / _thumb.jpg under msg/video).
 	MediaID string `json:"media_id,omitempty"`
 	DB      string `json:"-"`
 }
@@ -229,7 +230,7 @@ func (s *Store) scanTable(ctx context.Context, h *handle, rel, chat, table strin
 			m.SenderName = cs.senderName(chat, m.Sender)
 		}
 		render(&m, body, cs)
-		if m.Type == 3 {
+		if m.Type == 3 || m.Type == 43 {
 			if id := mediaIDRe.Find(packed); id != nil {
 				m.MediaID = string(id)
 			}
