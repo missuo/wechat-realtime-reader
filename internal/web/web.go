@@ -305,14 +305,20 @@ func (s *Server) image(w http.ResponseWriter, r *http.Request) {
 	if q.Get("size") == "full" {
 		size = media.Full
 	}
-	b, mime, err := s.Media.Image(r.Context(), q.Get("chat"), ids, time.Unix(ts, 0), size)
+	b, mime, thumbOnly, err := s.Media.Image(r.Context(), q.Get("chat"), ids, time.Unix(ts, 0), size)
 	if err != nil {
 		w.Header().Set("Cache-Control", "private, max-age=300")
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
 	w.Header().Set("Content-Type", mime)
-	w.Header().Set("Cache-Control", "private, max-age=86400")
+	if thumbOnly {
+		// The original may be downloaded later; do not cache the fallback long.
+		w.Header().Set("X-Image-Variant", "thumb-only")
+		w.Header().Set("Cache-Control", "private, max-age=300")
+	} else {
+		w.Header().Set("Cache-Control", "private, max-age=86400")
+	}
 	w.Write(b)
 }
 

@@ -103,8 +103,10 @@ var ErrNotFound = errors.New("image not downloaded to this Mac")
 
 // Image returns a browser-displayable image for a message attachment.
 // ids are file stems to try (the hex id from the message, then
-// "<local_id>_<create_time>"); t is the message time.
-func (l *Library) Image(ctx context.Context, chat string, ids []string, t time.Time, size Size) ([]byte, string, error) {
+// "<local_id>_<create_time>"); t is the message time. thumbOnly reports
+// that a Full request fell back to the thumbnail because WeChat has not
+// downloaded (or could not convert) the original.
+func (l *Library) Image(ctx context.Context, chat string, ids []string, t time.Time, size Size) (img []byte, mime string, thumbOnly bool, err error) {
 	sum := md5.Sum([]byte(chat))
 	chatDir := filepath.Join(l.attachDir, hex.EncodeToString(sum[:]))
 
@@ -126,7 +128,7 @@ func (l *Library) Image(ctx context.Context, chat string, ids []string, t time.T
 		}
 	}
 	if len(paths) == 0 {
-		return nil, "", ErrNotFound
+		return nil, "", false, ErrNotFound
 	}
 	keys, _ := l.EnsureKeys()
 	var lastErr error = ErrNotFound
@@ -140,33 +142,33 @@ func (l *Library) Image(ctx context.Context, chat string, ids []string, t time.T
 			lastErr = err
 			continue
 		}
-		img, mime, err := Decode(data, keys)
+		dec, typ, err := Decode(data, keys)
 		switch {
 		case err != nil:
 			lastErr = err
-		case mime == "image/wxgf":
+		case typ == "image/wxgf":
 			// Browsers cannot show WeChat's HEVC container; convert later.
-			hevc, hevcData = append(hevc, p), append(hevcData, img)
-		case mime == "image/heic":
+			hevc, hevcData = append(hevc, p), append(hevcData, dec)
+		case typ == "image/heic":
 			lastErr = errors.New("HEIC image")
 		case size == Full && strings.HasSuffix(p, "_t.dat"):
-			thumb, thumbMime = img, mime // last resort for a full request
+			thumb, thumbMime = dec, typ // last resort for a full request
 		default:
-			return img, mime, nil
+			return dec, typ, false, nil
 		}
 	}
 	// Full size: a converted HEVC original beats the thumbnail.
 	for i, p := range hevc {
-		img, err := l.convertWXGF(ctx, p, hevcData[i])
+		jpg, err := l.convertWXGF(ctx, p, hevcData[i])
 		if err == nil {
-			return img, "image/jpeg", nil
+			return jpg, "image/jpeg", false, nil
 		}
 		lastErr = err
 	}
 	if thumb != nil {
-		return thumb, thumbMime, nil
+		return thumb, thumbMime, true, nil
 	}
-	return nil, "", lastErr
+	return nil, "", false, lastErr
 }
 
 func findFFmpeg() string {

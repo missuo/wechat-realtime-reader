@@ -284,7 +284,7 @@ func New(st *store.Store, lib *media.Library, status func() map[string]snapshot.
 		}
 		mcp.AddTool(s, &mcp.Tool{
 			Name:        "get_image",
-			Description: "Return the picture of an image message so you can look at it. Only images already downloaded by WeChat on this Mac are available; thumbnails almost always are.",
+			Description: "Return the picture of an image message so you can look at it. Thumbnails are almost always available; originals only once WeChat has downloaded them (it skips many group-chat images until the user views them). When only the thumbnail exists, the result says THUMBNAIL ONLY.",
 			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 		}, func(ctx context.Context, _ *mcp.CallToolRequest, in imageIn) (*mcp.CallToolResult, any, error) {
 			chat, err := st.ResolveChat(ctx, in.Chat)
@@ -299,11 +299,18 @@ func New(st *store.Store, lib *media.Library, status func() map[string]snapshot.
 			if in.Full {
 				size = media.Full
 			}
-			b, mime, err := lib.Image(ctx, chat.Username, []string{in.MediaID}, t, size)
+			b, mime, thumbOnly, err := lib.Image(ctx, chat.Username, []string{in.MediaID}, t, size)
 			if err != nil {
 				return nil, nil, err
 			}
-			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.ImageContent{Data: b, MIMEType: mime}}}, nil, nil
+			content := []mcp.Content{&mcp.ImageContent{Data: b, MIMEType: mime}}
+			switch {
+			case thumbOnly:
+				content = append(content, &mcp.TextContent{Text: "THUMBNAIL ONLY: the original image is not downloaded to this Mac, so this is WeChat's small low-resolution thumbnail. Small text and fine detail may be unreadable; do not guess at them. The original appears once the user opens the image (or scrolls to it) in WeChat."})
+			case !in.Full:
+				content = append(content, &mcp.TextContent{Text: "This is the thumbnail. Call again with full=true for the original if detail matters."})
+			}
+			return &mcp.CallToolResult{Content: content}, nil, nil
 		})
 
 		type videoIn struct {
