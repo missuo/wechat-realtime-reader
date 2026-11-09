@@ -193,13 +193,14 @@ func (l *Library) convertWXGF(ctx context.Context, src string, data []byte) ([]b
 	if err != nil {
 		return nil, err
 	}
-	h := sha256.Sum256(fmt.Appendf(nil, "%s|%d|%d", src, st.Size(), st.ModTime().UnixNano()))
+	// v2: earlier builds cached the alpha plane (a white image) for two-stream files; a new key skips those.
+	h := sha256.Sum256(fmt.Appendf(nil, "v2|%s|%d|%d", src, st.Size(), st.ModTime().UnixNano()))
 	cachePath := filepath.Join(l.cacheDir, "img", hex.EncodeToString(h[:2]), hex.EncodeToString(h[:])+".jpg")
 	if b, err := os.ReadFile(cachePath); err == nil && len(b) > 0 {
 		return b, nil
 	}
-	i := bytes.Index(data, []byte{0, 0, 0, 1})
-	if i < 0 {
+	stream := wxgfColorStream(data)
+	if stream == nil {
 		return nil, errors.New("wxgf: no HEVC stream")
 	}
 	select {
@@ -212,7 +213,7 @@ func (l *Library) convertWXGF(ctx context.Context, src string, data []byte) ([]b
 	defer cancel()
 	cmd := exec.CommandContext(cctx, l.ffmpeg, "-hide_banner", "-loglevel", "error", "-f", "hevc", "-i", "pipe:0",
 		"-frames:v", "1", "-c:v", "mjpeg", "-q:v", "3", "-f", "image2", "pipe:1")
-	cmd.Stdin = bytes.NewReader(data[i:])
+	cmd.Stdin = bytes.NewReader(stream)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	if err := cmd.Run(); err != nil || Sniff(out.Bytes()) != "image/jpeg" {
@@ -262,4 +263,44 @@ func (l *Library) candidates(dirs []string, chatDir, id string, suffixes []strin
 		}
 	}
 	return out
+}
+
+// wxgfColorStream returns the HEVC stream to decode from a wxgf container.
+// Newer files carry two independent streams, each starting with its own VPS
+// (NAL type 32): a small grayscale alpha plane first, then the colour image.
+// Feeding everything from the first start code makes ffmpeg emit the alpha
+// plane, which looks like a blank white picture. Split at every VPS and keep
+// the largest stream (the colour image); files without a VPS fall back to the
+// data from the first start code.
+func wxgfColorStream(data []byte) []byte {
+	sc := []byte{0, 0, 0, 1}
+	var starts []int
+	for off := 0; ; {
+		j := bytes.Index(data[off:], sc)
+		if j < 0 {
+			break
+		}
+		pos := off + j
+		if pos+4 < len(data) && (data[pos+4]>>1)&0x3f == 32 {
+			starts = append(starts, pos)
+		}
+		off = pos + len(sc)
+	}
+	if len(starts) == 0 {
+		if i := bytes.Index(data, sc); i >= 0 {
+			return data[i:]
+		}
+		return nil
+	}
+	var best []byte
+	for k, a := range starts {
+		b := len(data)
+		if k+1 < len(starts) {
+			b = starts[k+1]
+		}
+		if seg := data[a:b]; len(seg) > len(best) {
+			best = seg
+		}
+	}
+	return best
 }

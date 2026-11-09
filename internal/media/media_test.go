@@ -124,3 +124,28 @@ func TestVideoLookup(t *testing.T) {
 		t.Fatalf("bad id accepted: %v", err)
 	}
 }
+
+// wxgf files can hold two HEVC streams: a small grayscale alpha plane, then
+// the colour image. Decoding from the first start code yields the alpha plane
+// (a white picture), so the largest VPS-led stream must be chosen.
+func TestWXGFColorStreamPicksLargestStream(t *testing.T) {
+	nal := func(typ byte, payload int) []byte {
+		b := []byte{0, 0, 0, 1, typ << 1, 1}
+		return append(b, bytes.Repeat([]byte{0xab}, payload)...)
+	}
+	alpha := bytes.Join([][]byte{nal(32, 20), nal(33, 30), nal(34, 5), nal(1, 100)}, nil)
+	color := bytes.Join([][]byte{nal(32, 20), nal(33, 30), nal(34, 5), nal(1, 5000)}, nil)
+	data := append([]byte("wxgf\x12\x00 header-bytes----"), append(alpha, color...)...)
+	got := wxgfColorStream(data)
+	if !bytes.Equal(got, color) {
+		t.Fatalf("picked %d bytes, want the %d-byte colour stream", len(got), len(color))
+	}
+	// Single-stream file without a VPS: keep everything from the first start code.
+	single := append([]byte("wxgf\x12\x00"), nal(1, 50)...)
+	if got := wxgfColorStream(single); !bytes.Equal(got, single[6:]) {
+		t.Fatalf("single stream: got %d bytes", len(got))
+	}
+	if wxgfColorStream([]byte("wxgf no stream")) != nil {
+		t.Fatal("expected nil without a start code")
+	}
+}
