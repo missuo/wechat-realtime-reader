@@ -78,6 +78,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/avatar/{user}", s.avatar)
 	mux.HandleFunc("GET /api/image", s.image)
 	mux.HandleFunc("GET /api/video", s.video)
+	mux.HandleFunc("GET /api/voice", s.voice)
 	mux.HandleFunc("GET /api/status", s.status)
 	mux.HandleFunc("GET /api/events", s.events)
 	if s.MCP != nil {
@@ -362,6 +363,42 @@ func (s *Server) video(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "video/mp4")
+	w.Header().Set("Cache-Control", "private, max-age=86400")
+	http.ServeContent(w, r, "", st.ModTime(), f)
+}
+
+// voice serves a voice message decoded to WAV: ?chat=&local_id=&t=
+func (s *Server) voice(w http.ResponseWriter, r *http.Request) {
+	if s.Media == nil {
+		http.NotFound(w, r)
+		return
+	}
+	q := r.URL.Query()
+	ts, _ := strconv.ParseInt(q.Get("t"), 10, 64)
+	lid, _ := strconv.ParseInt(q.Get("local_id"), 10, 64)
+	silk, err := s.Store.VoiceSILK(r.Context(), q.Get("chat"), lid, time.Unix(ts, 0))
+	if err != nil {
+		w.Header().Set("Cache-Control", "private, max-age=60")
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	p, _, err := s.Media.VoiceWAV(silk)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	f, err := os.Open(p)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "audio/wav")
 	w.Header().Set("Cache-Control", "private, max-age=86400")
 	http.ServeContent(w, r, "", st.ModTime(), f)
 }

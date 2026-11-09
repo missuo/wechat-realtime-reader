@@ -4,6 +4,8 @@ package mcpserver
 import (
 	"context"
 	"fmt"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,6 +31,7 @@ type Msg struct {
 	Quote    string `json:"quote,omitempty"`
 	URL      string `json:"url,omitempty"`
 	MediaID  string `json:"media_id,omitempty"`
+	LocalID  int64  `json:"local_id,omitempty"` // voice messages: pass to get_voice
 	Seq      int64  `json:"seq"`
 }
 
@@ -39,6 +42,9 @@ func compact(ms []store.Message, withChat bool) []Msg {
 			Time:   m.Time.Format("2006-01-02 15:04:05"),
 			Sender: m.Sender, From: m.SenderName,
 			Kind: m.Kind, Text: m.Text, Seq: m.Seq, MediaID: m.MediaID,
+		}
+		if m.Kind == "voice" {
+			c.LocalID = m.LocalID
 		}
 		if withChat {
 			c.Chat, c.ChatName = m.Chat, m.ChatName
@@ -310,6 +316,76 @@ func New(st *store.Store, lib *media.Library, status func() map[string]snapshot.
 			case !in.Full:
 				content = append(content, &mcp.TextContent{Text: "This is the thumbnail. Call again with full=true for the original if detail matters."})
 			}
+			return &mcp.CallToolResult{Content: content}, nil, nil
+		})
+
+		type voiceIn struct {
+			Chat    string `json:"chat" jsonschema:"conversation username or name the voice message was sent in"`
+			Time    string `json:"time" jsonschema:"the message time as returned (e.g. 2026-11-04 08:32:30)"`
+			LocalID int64  `json:"local_id,omitempty" jsonschema:"local_id of the voice message from get_messages; needed only when several voice messages share the same second"`
+			Audio   bool   `json:"audio,omitempty" jsonschema:"also return the audio itself (WAV, 24 kHz mono; about 48 KB per second)"`
+		}
+		mcp.AddTool(s, &mcp.Tool{
+			Name:        "get_voice",
+			Description: "Return a voice message: WeChat's own transcript when it exists (also already shown in the message text), its duration, and the local path of the decoded WAV (for your own speech-to-text when there is no transcript). Set audio=true to also receive the audio.",
+			Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		}, func(ctx context.Context, _ *mcp.CallToolRequest, in voiceIn) (*mcp.CallToolResult, any, error) {
+			chat, err := st.ResolveChat(ctx, in.Chat)
+			if err != nil {
+				return nil, nil, err
+			}
+			t, err := store.ParseTime(in.Time)
+			if err != nil {
+				return nil, nil, err
+			}
+			page, err := st.Messages(ctx, store.MessageQuery{Chat: chat.Username, Since: t, Until: t, Types: []int{34}, Limit: 20})
+			if err != nil {
+				return nil, nil, err
+			}
+			var hits []store.Message
+			for _, m := range page.Messages {
+				if in.LocalID == 0 || m.LocalID == in.LocalID {
+					hits = append(hits, m)
+				}
+			}
+			switch {
+			case len(hits) == 0:
+				return nil, nil, fmt.Errorf("no voice message in %s at %s", chat.Username, in.Time)
+			case len(hits) > 1:
+				ids := make([]string, len(hits))
+				for i, m := range hits {
+					ids[i] = strconv.FormatInt(m.LocalID, 10)
+				}
+				return nil, nil, fmt.Errorf("several voice messages at %s; pass local_id (one of %s)", in.Time, strings.Join(ids, ", "))
+			}
+			m := hits[0]
+			var info strings.Builder
+			fmt.Fprintf(&info, "%s · %s\n", m.SenderName, m.Time.Format("2006-01-02 15:04:05"))
+			if m.Extra != nil && m.Extra.Transcript != "" {
+				fmt.Fprintf(&info, "WeChat transcript: %s\n", m.Extra.Transcript)
+			} else {
+				info.WriteString("No WeChat transcript (the message was not converted to text in WeChat).\n")
+			}
+			content := []mcp.Content{}
+			silk, err := st.VoiceSILK(ctx, chat.Username, m.LocalID, m.Time)
+			if err == nil {
+				var p string
+				var d time.Duration
+				if p, d, err = lib.VoiceWAV(silk); err == nil {
+					fmt.Fprintf(&info, "Duration: %.1fs\nwav: %s", d.Seconds(), p)
+					if in.Audio {
+						b, rerr := os.ReadFile(p)
+						if rerr != nil {
+							return nil, nil, rerr
+						}
+						content = append(content, &mcp.AudioContent{Data: b, MIMEType: "audio/wav"})
+					}
+				}
+			}
+			if err != nil {
+				fmt.Fprintf(&info, "Audio unavailable: %v", err)
+			}
+			content = append([]mcp.Content{&mcp.TextContent{Text: info.String()}}, content...)
 			return &mcp.CallToolResult{Content: content}, nil, nil
 		})
 

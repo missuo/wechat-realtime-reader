@@ -167,7 +167,8 @@ func (s *Store) scanTable(ctx context.Context, h *handle, rel, chat, table strin
 	}
 	if q.Keyword != "" {
 		// Compressed rows cannot be filtered in SQL; uncompressed ones can.
-		where = append(where, "(IFNULL(WCDB_CT_message_content,0) != 0 OR message_content LIKE ?)")
+		// Voice transcripts live in packed_info_data, so voice rows always pass.
+		where = append(where, "(IFNULL(WCDB_CT_message_content,0) != 0 OR (local_type & 4294967295) = 34 OR message_content LIKE ?)")
 		// LIKE wildcards in the keyword only widen this pre-filter; the exact
 		// check runs on the rendered text below.
 		args = append(args, "%"+q.Keyword+"%")
@@ -230,6 +231,15 @@ func (s *Store) scanTable(ctx context.Context, h *handle, rel, chat, table strin
 			m.SenderName = cs.senderName(chat, m.Sender)
 		}
 		render(&m, body, cs)
+		if m.Type == 34 {
+			if t := voiceTranscript(packed); t != "" {
+				if m.Extra == nil {
+					m.Extra = &Extra{}
+				}
+				m.Extra.Transcript = t
+				m.Text += " " + t
+			}
+		}
 		if m.Type == 3 || m.Type == 43 {
 			if id := mediaIDRe.Find(packed); id != nil {
 				m.MediaID = string(id)

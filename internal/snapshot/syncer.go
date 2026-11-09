@@ -21,12 +21,13 @@ import (
 )
 
 // DefaultDBs are the databases needed for chat reading. head_image is
-// optional and used for avatars only.
+// optional and used for avatars only; media holds voice audio.
 var DefaultDBs = []string{
 	"contact/contact.db",
 	"session/session.db",
 	"message/message_[0-9]*.db",
 	"message/biz_message_[0-9]*.db",
+	"message/media_[0-9]*.db",
 	"head_image/head_image.db",
 }
 

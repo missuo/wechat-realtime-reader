@@ -18,6 +18,8 @@ type Extra struct {
 	FileSize int64  `json:"file_size,omitempty"`
 	Duration int    `json:"duration_sec,omitempty"`
 	Quote    *Quote `json:"quote,omitempty"`
+	// Transcript is WeChat's speech-to-text result for a voice message.
+	Transcript string `json:"transcript,omitempty"`
 }
 
 // Quote is the message a reply refers to.

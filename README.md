@@ -48,8 +48,8 @@ flowchart LR
 ### 1. 数据源发现
 
 - 账号目录必须由显式配置绑定，不根据目录排序或最新修改时间猜测。
-- 默认只监视 `contact`、`session`、`message_0..N` 和必要的 `biz_message_*`。
-- 朋友圈、收藏、媒体和搜索索引不属于实时聊天 MVP。
+- 默认只监视 `contact`、`session`、`message_0..N`、必要的 `biz_message_*`，以及存放语音音频的 `media_0..N` 和头像库 `head_image`。
+- 朋友圈、收藏和搜索索引不属于实时聊天 MVP。
 
 ### 2. 变化监视
 
@@ -172,10 +172,18 @@ HTTP：`serve` 同时在 `http://127.0.0.1:5678/mcp` 提供 Streamable HTTP，�
 | `search_messages` | 跨会话按关键词和/或发送者搜索 |
 | `list_chat_members` | 会话里发过言的人及条数 |
 | `get_new_messages` | 游标之后的新消息，用于持续跟踪 |
-| `get_image` | 返回图片消息的图片（缩略图或原图），Agent 可以直接看图 |
+| `get_image` | 返回图片消息的图片（缩略图或原图），Agent 可以直接看图；原图未下载时标注 `THUMBNAIL ONLY` |
+| `get_video` | 返回视频消息的封面图和本地 mp4 路径 |
+| `get_voice` | 返回语音消息的微信转写、时长和解码后的本地 WAV 路径；`audio=true` 时附带音频 |
 | `sync_status` | 每个库的快照新鲜度 |
 
 会话和发送者参数可以传 username，也可以传显示名，会做模糊匹配。时间参数支持 `2006-01-02`、`2006-01-02 15:04`、RFC3339、unix 秒，以及 `24h`、`7d` 这类相对时间。每个结果都带 `freshness`（`fresh`/`stale`、`lag_ms`）。
+
+媒体说明：
+
+- 图片缩略图和视频封面在收到消息时就会存下来；原图和 mp4 是否存在取决于微信是否已下载（私聊基本自动下载，群聊很多要在微信里看过才下载）。
+- 语音的微信转写（自动或手动转文字）存在消息的 `packed_info_data` 里，会直接拼进消息正文，可以被关键词搜索到。
+- 语音音频存在 `message/media_N.db` 的 `VoiceInfo` 表里，格式为 SILK v3，按需解码成 WAV，缓存在 vault 的 `cache/voice/`（0600）。
 
 同一时刻只有一个进程持有 `state/sync.lock` 负责写快照；其他进程（比如第二个 `mcp`）只读该进程的快照和 `manifest.json`。持锁进程退出后，其他进程会自动接管。
 

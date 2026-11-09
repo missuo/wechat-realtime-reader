@@ -351,6 +351,8 @@ function renderMessage(m, isGroup, kw, opts = {}) {
     line.append(imageBubble(m));
   } else if (m.kind === "video" && m.media_id) {
     line.append(videoBubble(m));
+  } else if (m.kind === "voice") {
+    line.append(voiceBubble(m, kw));
   } else {
     const isMedia = /^\[(图片|表情|语音|视频|语音\/视频通话)/.test(m.text) && m.kind !== "text";
     const b = el("div", "bubble" + (isMedia ? " media" : ""));
@@ -455,6 +457,40 @@ function openVideo(m) {
   box.addEventListener("click", close);
   document.addEventListener("keydown", onKey);
   document.body.append(box);
+}
+
+// ---------- voice ----------
+let playing = null; // the one <audio> currently playing
+
+function voiceBubble(m, kw) {
+  const b = el("div", "bubble voice");
+  const dur = (m.extra || {}).duration_sec;
+  const btn = el("button", "vplay", "▶");
+  btn.type = "button";
+  btn.title = "播放语音";
+  const len = el("span", "vlen", dur ? `${dur}″` : "语音");
+  const head = el("div", "vhead");
+  head.append(btn, len);
+  b.append(head);
+  const tr = (m.extra || {}).transcript;
+  if (tr) { const t = el("div", "vtext"); highlight(t, tr, kw); b.append(t); }
+
+  let audio = null;
+  btn.addEventListener("click", () => {
+    if (!audio) {
+      const t = Math.floor(Date.parse(m.time) / 1000);
+      audio = new Audio("/api/voice?" + new URLSearchParams({ chat: m.chat, local_id: m.local_id, t }));
+      audio.addEventListener("ended", () => { btn.textContent = "▶"; });
+      audio.addEventListener("pause", () => { btn.textContent = "▶"; });
+      audio.addEventListener("playing", () => { btn.textContent = "❚❚"; });
+      audio.addEventListener("error", () => { btn.textContent = "▶"; len.textContent = "音频不可用"; });
+    }
+    if (!audio.paused) { audio.pause(); return; }
+    if (playing && playing !== audio) playing.pause();
+    playing = audio;
+    audio.play().catch(() => {});
+  });
+  return b;
 }
 
 // ---------- live updates ----------
