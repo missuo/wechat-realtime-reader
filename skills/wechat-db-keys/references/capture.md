@@ -1,41 +1,63 @@
-# 获取 Key 的完整操作
+# Full key-acquisition procedure
 
-## 原理与适用范围
+## Principle and scope
 
-本项目读取 macOS 微信 4.x 的 WCDB/SQLCipher 风格数据库。已验证格式是 4096 字节一页、16 字节 salt、80 字节 reserve（16 字节 IV + 64 字节 HMAC），AES-256-CBC，HMAC-SHA512。
+This project reads the WCDB/SQLCipher-style databases of macOS WeChat 4.x. The
+verified format is 4096-byte pages, a 16-byte salt, an 80-byte reserve (16-byte
+IV + 64-byte HMAC), AES-256-CBC, and HMAC-SHA512.
 
-监听系统 C 函数 `CCKeyDerivationPBKDF` 的入口和出口：入口记录参数与输出指针，出口在返回值为 0 时复制结果。不要把输出指针本身当 Key，也不要在入口读取尚未生成的输出。CommonCrypto 参数顺序为：
+Hook the entry and exit of the system C function `CCKeyDerivationPBKDF`: at entry,
+record the arguments and the output pointer; at exit, copy the result only when
+the return value is 0. Do not treat the output pointer itself as the key, and do
+not read the not-yet-generated output at entry. The CommonCrypto argument order
+is:
 
 ```text
 algorithm, password, passwordLen, salt, saltLen, prf, rounds, derivedKey, derivedKeyLen
 ```
 
-本工具只处理 PBKDF2（2）+ HMAC-SHA512（5）、16 字节 salt、32 字节输出，以及 256000 或 2 轮的调用。256000 轮输出是候选 AES Key；2 轮通常用于 HMAC Key，其 32 字节输入也可能是 AES Key。最终身份由首页 HMAC 判定。捕获文件中的 `input`、`output` 都是敏感材料。
+This tool handles only PBKDF2 (2) + HMAC-SHA512 (5), a 16-byte salt, a 32-byte
+output, and calls with 256000 or 2 rounds. The 256000-round output is a candidate
+AES key; 2 rounds is usually for the HMAC key, whose 32-byte input may also be the
+AES key. The final identity is decided by the first-page HMAC. The `input` and
+`output` in the capture file are both sensitive material.
 
-每个数据库要独立配对，不能把某个 `message_0` 的 Key 套给其他分片。同一账号和数据库在 salt/派生输入未变化时通常可复用；重建数据库、迁移、重装或升级后应重新校验，不能保证永远不变。微信也可能改用其他派生实现；此 hook 并非所有版本必经路径。
+Each database must be paired independently; a `message_0` key cannot be applied to
+other shards. For the same account and database, a key is usually reusable while
+the salt/derivation input is unchanged; after a database rebuild, migration,
+reinstall, or upgrade it should be re-verified, with no guarantee of permanence.
+WeChat may also switch to another derivation implementation; this hook is not on
+every version's path.
 
-## 1. 先判断是否需要抓取
+## 1. First decide whether a capture is needed
 
-在项目根目录运行：
+From the project root:
 
 ```bash
 go build -o bin/wechat-reader ./cmd/wechat-reader
 bin/wechat-reader doctor
 ```
 
-已有配置且需要的库都通过，直接使用现有 Key。缺少配置时，先确定真实账号的 `db_storage` 路径：
+If the config exists and every needed database passes, use the existing keys. When
+the config is missing, first determine the real account's `db_storage` path:
 
 ```text
-~/Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/<账号目录>/db_storage
+~/Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/<account-dir>/db_storage
 ```
 
-明确绑定账号，不能按目录新旧猜测。此次文档操作不需要读取或显示真实 Key。
+Bind the account explicitly; do not guess by directory age. This documentation
+step does not require reading or displaying the real key.
 
-## 2. 准备同版本临时副本
+## 2. Prepare a same-version temporary copy
 
-先在微信菜单正常退出官方客户端，确认该应用及其辅助进程已退出。只关闭窗口不等于退出。避免两个客户端同时访问同一个账号目录。
+Quit the official client normally from the WeChat menu and confirm that the app
+and its helper processes have exited. Closing the window is not the same as
+quitting. Avoid two clients accessing the same account directory at once.
 
-以下命令从项目根目录执行，保持在同一个终端中，以保留 `capture_work` 变量。示例源为 `/Applications/WeChat.app`，按实际位置调整。副本位于临时目录；Key 则保存在长期私密目录。
+Run the commands below from the project root, staying in the same terminal to
+keep the `capture_work` variable. The example source is `/Applications/WeChat.app`;
+adjust to the real location. The copy lives in a temporary directory; the keys are
+saved in a long-lived private directory.
 
 ```bash
 umask 077
@@ -43,7 +65,7 @@ capture_work="$(mktemp -d /private/tmp/wechat-db-keys.XXXXXX)"
 ditto --noextattr --noqtn /Applications/WeChat.app "$capture_work/WeChat.app"
 /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$capture_work/WeChat.app/Contents/Info.plist"
 codesign --force --deep --sign - \
-  --entitlements SKILLS/wechat-db-keys/references/capture-entitlements.plist \
+  --entitlements skills/wechat-db-keys/references/capture-entitlements.plist \
   "$capture_work/WeChat.app"
 codesign --verify --deep --strict "$capture_work/WeChat.app"
 
@@ -53,45 +75,64 @@ mkdir -p ~/.config/wechat-realtime-reader/key-capture
 chmod 700 ~/.config/wechat-realtime-reader ~/.config/wechat-realtime-reader/key-capture
 ```
 
-此处对副本使用最小调试 entitlements，未保留正式沙盒签名。副本需读取同一个用户的账号数据才能派生对应 Key；**不能设置空白 HOME/CFFIXED_USER_HOME 后期待获得旧数据库 Key**。系统隐私权限仍可能阻止读取，此时先停止并检查报错，不关闭 SIP 或修改正式应用。
+This gives the copy minimal debug entitlements and does not keep the official
+sandbox signature. The copy must read the same user's account data to derive the
+matching key; **do not set a blank HOME/CFFIXED_USER_HOME and expect to obtain old
+database keys**. System privacy permissions may still block the read; if so, stop
+and inspect the error — do not disable SIP or modify the official app.
 
-复制签名保留了正式应用的文件与签名，但副本进程具有不同签名身份，仍可能被风控识别。本机历史调试有过登录限制，不要将这种流程作为日常运行方式。
+Copy-signing keeps the official app's files and signature, but the copy process
+has a different signing identity and may still be flagged by risk-control. This
+Mac's debugging history has seen login restrictions; do not make this flow a
+day-to-day way of running.
 
-## 3. 启动前安装监听器
+## 3. Install the listener before launch
 
-不要双击副本，也不要先启动再 attach。执行：
+Do not double-click the copy, and do not launch first and attach later. Run:
 
 ```bash
-"$capture_work/venv/bin/python" SKILLS/wechat-db-keys/scripts/keys.py capture \
+"$capture_work/venv/bin/python" skills/wechat-db-keys/scripts/keys.py capture \
   --app "$capture_work/WeChat.app" \
   --seconds 30 \
   --output ~/.config/wechat-realtime-reader/key-capture/candidates-new.jsonl
 ```
 
-脚本顺序是暂停启动、attach、加载 hook、收到 `ready`、恢复启动。只在终端显示 `Hook ready` 后才会恢复应用。捕获值仅写入 0600 文件，终端只显示计数。默认 30 秒、最多 120 秒，到期或 Ctrl-C 会杀掉本次启动的主进程。
+The script's order is suspend launch, attach, load the hook, receive `ready`,
+resume launch. It resumes the app only after the terminal shows `Hook ready`.
+Captured values are written only to a 0600 file; the terminal shows only counts.
+Default 30 s, 120 s maximum; on timeout or Ctrl-C it kills the main process it
+launched.
 
-有已保存登录态时，数据库打开阶段通常就会触发派生；有些库懒加载，需要用户进入相应会话。若进入扫码/确认页面，需要用户本人完成，脚本不代替确认。够用后立即 Ctrl-C；若出现限制登录、安全提示或崩溃，结束这次维护，不反复重试。
+With a saved login state, the database-open stage usually triggers derivation;
+some databases are lazy-loaded and require the user to enter the relevant chat. If
+a QR/confirmation page appears, the user must complete it; the script does not
+confirm on their behalf. Ctrl-C as soon as there is enough; on a restricted login,
+security prompt, or crash, end this maintenance and do not keep retrying.
 
-不要直接 `tee` 应用输出或使用会打印 Key 的 Frida console 脚本。本工具通过 `stdio='pipe'` 抑制应用控制台输出。结束后还要检查副本的辅助进程：
+Do not `tee` the app output or use a Frida console script that prints keys. This
+tool suppresses the app console output via `stdio='pipe'`. Afterwards, also check
+the copy's helper processes:
 
 ```bash
 ps -axo pid=,command= | rg -F "$capture_work/WeChat.app/"
 ```
 
-若有残留，按输出逐个核实 PID 后 `kill -TERM <PID>`，再次检查。只操作本次临时目录下的进程。
+If any remain, verify each PID against the output and `kill -TERM <PID>`, then
+check again. Only touch processes under this run's temporary directory.
 
-## 4. 离线验证并配对
+## 4. Verify offline and pair
 
-替换下面的账号目录占位符；不要使用本示例字面值：
+Replace the account-directory placeholder below; do not use this example's literal
+value:
 
 ```bash
-"$capture_work/venv/bin/python" SKILLS/wechat-db-keys/scripts/keys.py pair \
+"$capture_work/venv/bin/python" skills/wechat-db-keys/scripts/keys.py pair \
   --capture ~/.config/wechat-realtime-reader/key-capture/candidates-new.jsonl \
-  --db-root "$HOME/Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/<账号目录>/db_storage" \
+  --db-root "$HOME/Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/<account-dir>/db_storage" \
   --output ~/.config/wechat-realtime-reader/keys-new.json
 ```
 
-认证算法与 `internal/crypto/crypto.go` 一致：
+The authentication algorithm matches `internal/crypto/crypto.go`:
 
 ```text
 salt = page1[0:16]
@@ -101,33 +142,50 @@ expected = HMAC-SHA512(macKey, page1[16:4032] || LE32(1))
 compare expected with page1[4032:4096] using constant-time comparison
 ```
 
-只有恰好一个候选通过认证的库会写入结果。候选按值去重，不按捕获顺序猜库；输出键名是相对于 `db_storage` 的路径，如 `message/message_0.db`。缺库不会自动伪造成功；需检查聊天必需的 `contact/contact.db`、`session/session.db` 和所有实际存在的 `message/message_N.db` 是否已配对。`pair` 只读主库首页，不做 WAL 快照合并；抓取结束后保持客户端退出有助于稳定验证。
+Only a database with exactly one candidate passing authentication is written to
+the result. Candidates are de-duplicated by value, not guessed by capture order;
+the output key is a path relative to `db_storage`, e.g. `message/message_0.db`. A
+missing database is never faked into a success; check whether the chat-essential
+`contact/contact.db`, `session/session.db`, and every actually-present
+`message/message_N.db` are paired. `pair` reads only the main-db first page and
+does no WAL snapshot merge; keeping the client quit after the capture helps stable
+verification.
 
-脚本只输出匹配数量，不显示 Key。文件格式是项目直接接受的扁平 JSON：
+The script prints only the match count, never a key. The file format is the flat
+JSON the project accepts directly:
 
 ```json
 {
-  "contact/contact.db": "<64位十六进制Key>",
-  "session/session.db": "<64位十六进制Key>",
-  "message/message_0.db": "<64位十六进制Key>"
+  "contact/contact.db": "<64-hex-key>",
+  "session/session.db": "<64-hex-key>",
+  "message/message_0.db": "<64-hex-key>"
 }
 ```
 
-## 5. 接入读取器
+## 5. Wire into the reader
 
-已有 `keys.json` 时先私密备份，再将 `keys-new.json` 中通过认证的条目合并进去。不要直接用不完整结果覆盖完整旧映射；如果旧文件已有同名条目，也要用当前数据库认证后选择。备份同样保持 0600，不写入项目。
+If `keys.json` already exists, back it up privately first, then merge the
+authenticated entries from `keys-new.json` into it. Do not overwrite a complete
+old mapping with an incomplete new result; if the old file already has an entry of
+the same name, choose after authenticating against the current database. Keep the
+backup at 0600 and out of the project.
 
-首次配置且 `keys.json` 尚不存在时，可用 `cp -n ~/.config/wechat-realtime-reader/keys-new.json ~/.config/wechat-realtime-reader/keys.json`，随后检查是否确实创建成功。`source-config.json`（0600）格式为：
+For a first-time setup where `keys.json` does not yet exist, use
+`cp -n ~/.config/wechat-realtime-reader/keys-new.json ~/.config/wechat-realtime-reader/keys.json`,
+then check that it was actually created. The `source-config.json` (0600) format
+is:
 
 ```json
 {
-  "wxid": "<账号目录名>",
-  "db_base_path": "~/Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/<账号目录>/db_storage",
+  "wxid": "<account-dir-name>",
+  "db_base_path": "~/Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/<account-dir>/db_storage",
   "vault_dir": "~/.local/share/wechat-realtime-reader"
 }
 ```
 
-`decrypted_dir` 未指定时使用 `vault_dir/decrypted/current`。明文目录不放 Projects、Desktop、Downloads 或同步盘。完成后：
+When `decrypted_dir` is unspecified, `vault_dir/decrypted/current` is used. Do not
+place the plaintext directory in Projects, Desktop, Downloads, or a sync drive.
+When done:
 
 ```bash
 chmod 600 ~/.config/wechat-realtime-reader/keys.json ~/.config/wechat-realtime-reader/source-config.json
@@ -135,37 +193,58 @@ go build -o bin/wechat-reader ./cmd/wechat-reader
 bin/wechat-reader doctor
 ```
 
-`doctor` 逐库尝试 derived/raw 模式并验证首页。新工具配对保存的是 derived AES Key，因此不需要再执行 256000 轮派生。要验证全库时再执行 `bin/wechat-reader sync`，该步骤会生成私密明文快照。完成后退出临时副本，重新打开官方微信；日常 `serve`/`mcp` 不加载 Frida。
+`doctor` tries derived/raw mode per database and verifies the first page. The new
+tool pairs and saves the derived AES key, so the 256000-round derivation is not
+needed again. To verify all databases, run `bin/wechat-reader sync`, which
+produces a private plaintext snapshot. When done, quit the temporary copy and
+reopen the official WeChat; day-to-day `serve`/`mcp` does not load Frida.
 
-## 6. 清理与保留
+## 6. Cleanup and retention
 
-确认临时目录下所有进程均已退出后，把终端变量 `capture_work` 显示出的**本次精确目录**移到废纸篓；删除的是临时应用和 venv。不要用模糊通配符批量清理，也不要删除正式应用或账号数据。
+After confirming all processes under the temporary directory have exited, move
+**the exact directory** shown by the terminal variable `capture_work` to the
+Trash; what is deleted is the temporary app and venv. Do not bulk-clean with vague
+wildcards, and do not delete the official app or account data.
 
-本项目用户已要求保留所有 Key 相关材料：保留 `keys.json`、旧备份、`keys-new.json`、`source-config.json` 和 `key-capture/`；原始候选文件也包含 Key，继续保持 0600。除非用户另行明确要求，不删除它们。
+This project's user has asked to keep all key-related material: keep `keys.json`,
+old backups, `keys-new.json`, `source-config.json`, and `key-capture/`; the raw
+candidate file also contains keys, so keep it at 0600. Do not delete them unless
+the user explicitly asks.
 
-## 常见失败
+## Common failures
 
-| 现象 | 检查与处理 |
+| Symptom | Check and handling |
 | --- | --- |
-| `Operation failed (FileExistsError)` | 工具拒绝覆盖现有输出；换一个新文件名，保留旧文件。 |
-| 没有 `Hook ready` | hook 未装好；工具不恢复启动并清理主进程。检查 Frida 版本、导出符号、签名和调试权限。 |
-| `ObjC is not defined` | Frida 17 把 bridge 拆出 GumJS。本脚本只调用 C API，不需要 ObjC；检查是否误用了其他旧脚本。 |
-| 0 次捕获 | 确认不是先启动再 attach；检查登录态、实际账号目录、进程是否退出、库是否被懒加载。若版本改了派生实现，停止并分析新实现，不能直接认定 Key 被销毁。 |
-| 有捕获但 0 配对 | 可能只抓到了 MAC 输出、读错账号、格式改变或 Key 已轮换。先核对首页布局；不要跳过 HMAC 校验。 |
-| 部分库缺失 | 捕获仅覆盖已打开的库；先判断实时聊天必需库是否齐全，再决定是否需要另一次维护。 |
-| `PermissionError` / 无法 attach | 检查副本签名、Python/Frida 架构、隐私权限。不要给正式应用重签名，不自动使用 sudo 或关闭系统保护。 |
-| 风控、安全提示、限制登录 | 立即结束本次操作；恢复官方客户端，不循环重试。 |
+| `Operation failed (FileExistsError)` | The tool refuses to overwrite an existing output; use a new filename and keep the old file. |
+| No `Hook ready` | The hook did not install; the tool does not resume launch and cleans up the main process. Check the Frida version, exported symbols, signature, and debug entitlements. |
+| `ObjC is not defined` | Frida 17 split the bridge out of GumJS. This script calls only the C API and needs no ObjC; check whether a different old script was used by mistake. |
+| 0 captures | Confirm it was not launch-then-attach; check the login state, the real account directory, whether the process exited, and whether the database is lazy-loaded. If the version changed its derivation implementation, stop and analyze the new one — do not conclude the key was destroyed. |
+| Captures but 0 pairings | Possibly only MAC outputs were captured, the wrong account was read, the format changed, or the key rotated. Re-check the first-page layout; do not skip the HMAC check. |
+| Some databases missing | A capture covers only the opened databases; decide whether the realtime-chat-essential databases are complete before deciding on another maintenance pass. |
+| `PermissionError` / cannot attach | Check the copy's signature, the Python/Frida architecture, and privacy permissions. Do not re-sign the official app, auto-use sudo, or turn off system protection. |
+| Risk-control, security prompt, restricted login | End this run immediately; restore the official client and do not loop retries. |
 
-## 验证状态与依据
+## Verification status and basis
 
-既有项目在 WeChat 4.2.0.16 上保存了通过首页验证的 Key，并验证过新消息回读。此 Skill 中的新脚本应以当前提交的离线测试和实际维护记录分别报告；没有真实启动验证时不能声称“现场抓取成功”。
+The existing project saved first-page-verified keys on WeChat 4.2.0.16 and
+verified new-message read-back. New scripts in this skill should be reported
+separately against the current commit's offline tests and the actual maintenance
+record; do not claim "on-device capture succeeded" without a real launch
+verification.
 
-2026-11-04：新增工具通过 3 个离线合成测试，覆盖正确 Key、错误 Key、salt/密文/IV/HMAC 篡改、候选去重、文件权限、拒绝覆盖与拒绝私密目录之外的输出；本次未启动微信验证新抓取脚本。可在项目根目录复跑：
+2026-11-04: the new tool passes 3 offline synthetic tests covering the correct
+key, a wrong key, salt/ciphertext/IV/HMAC tampering, candidate de-duplication,
+file permissions, refusing to overwrite, and refusing output outside a private
+directory; this run did not launch WeChat to verify the new capture script. Re-run
+from the project root:
 
 ```bash
-python3 -m unittest discover -s SKILLS/wechat-db-keys/scripts -p 'test_*.py' -v
+python3 -m unittest discover -s skills/wechat-db-keys/scripts -p 'test_*.py' -v
 ```
 
-- [Frida JavaScript API](https://frida.re/docs/javascript-api/)：Module、Interceptor、send、NativePointer API。
-- [Frida 17 发布说明](https://frida.re/news/2025/05/17/frida-17-0-0-released/)：runtime bridges 拆分及 API 变化。
-- 项目密码学实现：`internal/crypto/crypto.go`；配置定义：`internal/config/config.go`。
+- [Frida JavaScript API](https://frida.re/docs/javascript-api/): Module,
+  Interceptor, send, NativePointer APIs.
+- [Frida 17 release notes](https://frida.re/news/2025/05/17/frida-17-0-0-released/):
+  runtime-bridge split and API changes.
+- Project crypto implementation: `internal/crypto/crypto.go`; config definitions:
+  `internal/config/config.go`.
