@@ -29,7 +29,7 @@
 
 运行时只加载已配对 key。不应在日常流程中启动 Frida 或自签名微信。仅在数据库 salt/key 轮换且旧 key 校验失败时，才将“重新获取 key”作为独立的人工维护流程。
 
-获取 Key 的操作说明与配套工具见 [项目 Skills](SKILLS.md)，详细入口为 [wechat-db-keys](SKILLS/wechat-db-keys/SKILL.md)。
+获取 Key 的操作说明与配套工具见 [项目 Skills](SKILLS.md)，详细入口为 [wechat-db-keys](skills/wechat-db-keys/SKILL.md)。
 
 ## 整体架构
 
